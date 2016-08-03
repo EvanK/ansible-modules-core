@@ -384,7 +384,7 @@ class CronTab(object):
 
     def get_cron_job(self,minute,hour,day,month,weekday,job,special,disabled):
         # normalize any leading/trailing newlines (ansible/ansible-modules-core#3791)
-        job = job.strip()
+        job = job.strip('\r\n')
 
         if disabled:
             disable_prefix = '#'
