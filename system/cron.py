@@ -64,6 +64,7 @@ options:
   job:
     description:
       - The command to execute or, if env is set, the value of environment variable.
+        The command cannot contain line breaks.
         Required if state=present.
     required: false
     aliases: ['value']
@@ -386,6 +387,10 @@ class CronTab(object):
         # normalize any leading/trailing newlines (ansible/ansible-modules-core#3791)
         job = job.strip('\r\n')
 
+        # if inner linebreaks are found, raise exception
+        if any(char in job for char in ['\r', '\n']):
+            raise CronTabError("Job cannot contain line breaks: %s" % job)
+
         if disabled:
             disable_prefix = '#'
         else:
@@ -644,7 +649,10 @@ def main():
                 crontab.remove_env(name)
                 changed = True
     else:
-        job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
+        try:
+            job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
+        except CronTabError err:
+            module.fail_json(msg=str(err))
         old_job = crontab.find_job(name)
 
         if do_install:
