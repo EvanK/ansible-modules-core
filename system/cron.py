@@ -202,6 +202,7 @@ EXAMPLES = '''
 
 import os
 import re
+import sys
 import tempfile
 import platform
 import pipes
@@ -651,8 +652,8 @@ def main():
     else:
         try:
             job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
-        except CronTabError as err:
-            module.fail_json(msg=str(err))
+        except CronTabError:
+            module.fail_json(msg=str(sys.exc_info()[1]))
         old_job = crontab.find_job(name)
 
         if do_install:
