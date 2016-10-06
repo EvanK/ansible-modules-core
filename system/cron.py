@@ -653,7 +653,8 @@ def main():
         try:
             job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
         except CronTabError:
-            module.fail_json(msg=str(sys.exc_info()[1]))
+            err = sys.exc_info()[1]
+            module.fail_json(msg=str(err))
         old_job = crontab.find_job(name)
 
         if do_install:
