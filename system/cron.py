@@ -651,7 +651,7 @@ def main():
     else:
         try:
             job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
-        except CronTabError err:
+        except CronTabError as err:
             module.fail_json(msg=str(err))
         old_job = crontab.find_job(name)
 
