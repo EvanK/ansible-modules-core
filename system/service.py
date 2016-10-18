@@ -1350,7 +1350,7 @@ class SunOSService(Service):
     def service_control(self):
         status = self.get_sunos_svcs_status()
 
-        # if starting or reloading, clear maintenace states
+        # if starting or reloading, clear maintenance states
         if self.action in ['start', 'reload', 'restart'] and status in ['maintenance', 'degraded']:
             rc, stdout, stderr = self.execute_command("%s clear %s" % (self.svcadm_cmd, self.name))
             if rc != 0:
@@ -1462,10 +1462,9 @@ def main():
             runlevel = dict(required=False, default='default'),
             arguments = dict(aliases=['args'], default=''),
         ),
-        supports_check_mode=True
+        supports_check_mode=True,
+        required_one_of=[['state', 'enabled']],
     )
-    if module.params['state'] is None and module.params['enabled'] is None:
-        module.fail_json(msg="Neither 'state' nor 'enabled' set")
 
     service = Service(module)
 

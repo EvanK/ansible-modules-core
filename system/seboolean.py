@@ -71,7 +71,7 @@ def has_boolean_value(module, name):
         rc, bools = selinux.security_get_boolean_names()
     except OSError:
         module.fail_json(msg="Failed to get list of boolean names")
-    if name in bools:
+    if to_bytes(name) in bools:
         return True
     else:
         return False
@@ -182,6 +182,11 @@ def main():
     result = {}
     result['name'] = name
 
+    if hasattr(selinux, 'selinux_boolean_sub'):
+        # selinux_boolean_sub allows sites to rename a boolean and alias the old name
+        # Feature only available in selinux library since 2012.
+        name = selinux.selinux_boolean_sub(name)
+
     if not has_boolean_value(module, name):
         module.fail_json(msg="SELinux boolean %s does not exist." % name)
 
@@ -210,4 +215,5 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
+from ansible.module_utils._text import to_bytes
 main()

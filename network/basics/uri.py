@@ -66,7 +66,7 @@ options:
   body:
     description:
       - The body of the http request/response to the web service. If C(body_format) is set
-        to 'json' it will take an already formated JSON string or convert a data structure
+        to 'json' it will take an already formatted JSON string or convert a data structure
         into JSON.
     required: false
     default: null
@@ -384,14 +384,14 @@ def main():
     dict_headers = module.params['headers']
 
     if body_format == 'json':
-        # Encode the body unless its a string, then assume it is preformatted JSON
+        # Encode the body unless its a string, then assume it is pre-formatted JSON
         if not isinstance(body, basestring):
             body = json.dumps(body)
         dict_headers['Content-Type'] = 'application/json'
 
     # Grab all the http headers. Need this hack since passing multi-values is
     # currently a bit ugly. (e.g. headers='{"Content-Type":"application/json"}')
-    for key, value in module.params.iteritems():
+    for key, value in six.iteritems(module.params):
         if key.startswith("HEADER_"):
             skey = key.replace("HEADER_", "")
             dict_headers[skey] = value
@@ -435,7 +435,7 @@ def main():
     # Transmogrify the headers, replacing '-' with '_', since variables dont
     # work with dashes.
     uresp = {}
-    for key, value in resp.iteritems():
+    for key, value in six.iteritems(resp):
         ukey = key.replace("-", "_")
         uresp[ukey] = value
 

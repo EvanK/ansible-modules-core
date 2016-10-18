@@ -22,7 +22,7 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
-# Cron Plugin: The goal of this plugin is to provide an indempotent method for
+# Cron Plugin: The goal of this plugin is to provide an idempotent method for
 # setting up cron jobs on a host. The script will play well with other manually
 # entered crons. Each cron job entered will be preceded with a comment
 # describing the job so that it can be found later, which is required to be
@@ -140,7 +140,7 @@ options:
   env:
     description:
       - If set, manages a crontab's environment variable. New variables are added on top of crontab.
-        "name" and "value" paramenters are the name and the value of environment variable.
+        "name" and "value" parameters are the name and the value of environment variable.
     version_added: "2.1"
     required: false
     default: "no"
@@ -201,6 +201,7 @@ EXAMPLES = '''
 '''
 
 import os
+import pwd
 import re
 import sys
 import tempfile
@@ -485,7 +486,7 @@ class CronTab(object):
                 return "%s -l %s" % (pipes.quote(CRONCMD), pipes.quote(self.user))
             elif platform.system() == 'HP-UX':
                 return "%s %s %s" % (CRONCMD , '-l', pipes.quote(self.user))
-            elif os.getlogin() != self.user:
+            elif pwd.getpwuid(os.getuid())[0] != self.user:
                 user = '-u %s' % pipes.quote(self.user)
         return "%s %s %s" % (CRONCMD , user, '-l')
 
@@ -497,7 +498,7 @@ class CronTab(object):
         if self.user:
             if platform.system() in ['SunOS', 'HP-UX', 'AIX']:
                 return "chown %s %s ; su '%s' -c '%s %s'" % (pipes.quote(self.user), pipes.quote(path), pipes.quote(self.user), CRONCMD, pipes.quote(path))
-            elif os.getlogin() != self.user:
+            elif pwd.getpwuid(os.getuid())[0] != self.user:
                 user = '-u %s' % pipes.quote(self.user)
         return "%s %s %s" % (CRONCMD , user, pipes.quote(path))
 
@@ -650,14 +651,15 @@ def main():
                 crontab.remove_env(name)
                 changed = True
     else:
-        try:
-            job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
-        except CronTabError:
-            err = sys.exc_info()[1]
-            module.fail_json(msg=str(err))
         old_job = crontab.find_job(name)
 
         if do_install:
+            try:
+                job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
+            except CronTabError:
+                err = sys.exc_info()[1]
+                module.fail_json(msg=str(err))
+
             if len(old_job) == 0:
                 crontab.add_job(name, job)
                 changed = True

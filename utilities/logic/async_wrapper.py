@@ -32,6 +32,8 @@ import signal
 import time
 import syslog
 
+PY3 = sys.version_info[0] == 3
+
 syslog.openlog('ansible-%s' % os.path.basename(__file__))
 syslog.syslog(syslog.LOG_NOTICE, 'Invoked with %s' % " ".join(sys.argv[1:]))
 
@@ -49,8 +51,7 @@ def daemonize_self():
         e = sys.exc_info()[1]
         sys.exit("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
 
-    # decouple from parent environment
-    os.chdir("/")
+    # decouple from parent environment (does not chdir / to keep the directory context the same as for non async tasks)
     os.setsid()
     os.umask(int('022', 8))
 
@@ -64,11 +65,55 @@ def daemonize_self():
         e = sys.exc_info()[1]
         sys.exit("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
 
-    dev_null = file('/dev/null','rw')
+    dev_null = open('/dev/null', 'w')
     os.dup2(dev_null.fileno(), sys.stdin.fileno())
     os.dup2(dev_null.fileno(), sys.stdout.fileno())
     os.dup2(dev_null.fileno(), sys.stderr.fileno())
 
+# NB: this function copied from module_utils/json_utils.py. Ensure any changes are propagated there.
+# FUTURE: AnsibleModule-ify this module so it's Ansiballz-compatible and can use the module_utils copy of this function.
+def _filter_non_json_lines(data):
+    '''
+    Used to filter unrelated output around module JSON output, like messages from
+    tcagetattr, or where dropbear spews MOTD on every single command (which is nuts).
+
+    Filters leading lines before first line-starting occurrence of '{' or '[', and filter all
+    trailing lines after matching close character (working from the bottom of output).
+    '''
+    warnings = []
+
+    # Filter initial junk
+    lines = data.splitlines()
+
+    for start, line in enumerate(lines):
+        line = line.strip()
+        if line.startswith(u'{'):
+            endchar = u'}'
+            break
+        elif line.startswith(u'['):
+            endchar = u']'
+            break
+    else:
+        raise ValueError('No start of json char found')
+
+    # Filter trailing junk
+    lines = lines[start:]
+
+    for reverse_end_offset, line in enumerate(reversed(lines)):
+        if line.strip().endswith(endchar):
+            break
+    else:
+        raise ValueError('No end of json char found')
+
+    if reverse_end_offset > 0:
+        # Trailing junk is uncommon and can point to things the user might
+        # want to change.  So print a warning if we find any
+        trailing_junk = lines[len(lines) - reverse_end_offset:]
+        warnings.append('Module invocation had junk after the JSON data: %s' % '\n'.join(trailing_junk))
+
+    lines = lines[:(len(lines) - reverse_end_offset)]
+
+    return ('\n'.join(lines), warnings)
 
 def _run_module(wrapped_cmd, jid, job_path):
 
@@ -81,11 +126,28 @@ def _run_module(wrapped_cmd, jid, job_path):
     result = {}
 
     outdata = ''
+    filtered_outdata = ''
+    stderr = ''
     try:
         cmd = shlex.split(wrapped_cmd)
         script = subprocess.Popen(cmd, shell=False, stdin=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         (outdata, stderr) = script.communicate()
-        result = json.loads(outdata)
+        if PY3:
+            outdata = outdata.decode('utf-8', 'surrogateescape')
+            stderr = stderr.decode('utf-8', 'surrogateescape')
+
+        (filtered_outdata, json_warnings) = _filter_non_json_lines(outdata)
+
+        result = json.loads(filtered_outdata)
+
+        if json_warnings:
+            # merge JSON junk warnings with any existing module warnings
+            module_warnings = result.get('warnings', [])
+            if type(module_warnings) is not list:
+                module_warnings = [module_warnings]
+            module_warnings.extend(json_warnings)
+            result['warnings'] = module_warnings
+
         if stderr:
             result['stderr'] = stderr
         jobfile.write(json.dumps(result))
@@ -96,15 +158,18 @@ def _run_module(wrapped_cmd, jid, job_path):
             "failed": 1,
             "cmd" : wrapped_cmd,
             "msg": str(e),
+            "outdata": outdata, # temporary notice only
+            "stderr": stderr
         }
         result['ansible_job_id'] = jid
         jobfile.write(json.dumps(result))
 
-    except:
+    except (ValueError, Exception):
         result = {
             "failed" : 1,
             "cmd" : wrapped_cmd,
             "data" : outdata, # temporary notice only
+            "stderr": stderr,
             "msg" : traceback.format_exc()
         }
         result['ansible_job_id'] = jid
@@ -119,7 +184,7 @@ def _run_module(wrapped_cmd, jid, job_path):
 ####################
 if __name__ == '__main__':
 
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 5:
         print(json.dumps({
             "failed" : True,
             "msg"    : "usage: async_wrapper <jid> <time_limit> <modulescript> <argsfile>.  Humans, do not call directly!"
@@ -129,8 +194,9 @@ if __name__ == '__main__':
     jid = "%s.%d" % (sys.argv[1], os.getpid())
     time_limit = sys.argv[2]
     wrapped_module = sys.argv[3]
-    if len(sys.argv) >= 5:
-        argsfile = sys.argv[4]
+    argsfile = sys.argv[4]
+    # consider underscore as no argsfile so we can support passing of additional positional parameters
+    if argsfile != '_':
         cmd = "%s %s" % (wrapped_module, argsfile)
     else:
         cmd = wrapped_module
@@ -156,7 +222,7 @@ if __name__ == '__main__':
         if pid:
             # Notify the overlord that the async process started
 
-            # we need to not return immmediately such that the launched command has an attempt
+            # we need to not return immediately such that the launched command has an attempt
             # to initialize PRIOR to ansible trying to clean up the launch directory (and argsfile)
             # this probably could be done with some IPC later.  Modules should always read
             # the argsfile at the very first start of their execution anyway

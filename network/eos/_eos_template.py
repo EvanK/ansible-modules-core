@@ -19,7 +19,7 @@ DOCUMENTATION = """
 ---
 module: eos_template
 version_added: "2.1"
-author: "Peter sprygada (@privateip)"
+author: "Peter Sprygada (@privateip)"
 short_description: Manage Arista EOS device configurations
 description:
   - Manages network device configurations over SSH or eAPI.  This module
@@ -28,6 +28,7 @@ description:
     by evaluating the current running-config and only pushing configuration
     commands that are not already configured.  The config source can
     be a set of commands or a template.
+deprecated: Deprecated in 2.2. Use eos_config instead
 extends_documentation_fragment: eos
 options:
   src:
@@ -111,17 +112,22 @@ updates:
 
 responses:
   description: The set of responses from issuing the commands on the device
-  retured: when not check_mode
+  returned: when not check_mode
   type: list
   sample: ['...', '...']
 """
-
 import re
+
+import ansible.module_utils.eos
+
+from ansible.module_utils.network import NetworkModule
+from ansible.module_utils.netcfg import NetworkConfig, dumps
 
 def get_config(module):
     config = module.params.get('config')
+    defaults = module.params['include_defaults']
     if not config and not module.params['force']:
-        config = module.config
+        config = module.config.get_config(include_defaults=defaults)
     return config
 
 def filter_exit(commands):
@@ -163,9 +169,9 @@ def main():
 
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
 
-    module = get_module(argument_spec=argument_spec,
-                        mutually_exclusive=mutually_exclusive,
-                        supports_check_mode=True)
+    module = NetworkModule(argument_spec=argument_spec,
+                           mutually_exclusive=mutually_exclusive,
+                           supports_check_mode=True)
 
     replace = module.params['replace']
 
@@ -188,24 +194,21 @@ def main():
 
         if not module.params['force']:
             commands = candidate.difference((running or list()))
+            commands = dumps(commands, 'commands').split('\n')
+            commands = [str(c) for c in commands if c]
         else:
             commands = str(candidate).split('\n')
 
+    commands = filter_exit(commands)
     if commands:
-        commands = filter_exit(commands)
         if not module.check_mode:
-            commands = [str(c).strip() for c in commands]
-            response = module.configure(commands, replace=replace)
+            response = module.config.load_config(commands, replace=replace,
+                                                 commit=True)
             result['responses'] = response
         result['changed'] = True
 
     result['updates'] = commands
     module.exit_json(**result)
 
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-from ansible.module_utils.shell import *
-from ansible.module_utils.netcfg import *
-from ansible.module_utils.eos import *
 if __name__ == '__main__':
     main()

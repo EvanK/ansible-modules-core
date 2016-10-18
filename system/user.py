@@ -221,6 +221,7 @@ import grp
 import platform
 import socket
 import time
+from ansible.module_utils._text import to_native
 
 try:
     import spwd
@@ -402,7 +403,7 @@ class User(object):
         helpout = data1 + data2
 
         # check if --append exists
-        lines = helpout.split('\n')
+        lines = to_native(helpout).split('\n')
         for line in lines:
             if line.strip().startswith('-a, --append'):
                 return True
@@ -1237,6 +1238,29 @@ class SunOS(User):
     distribution = None
     SHADOWFILE = '/etc/shadow'
 
+    def get_password_defaults(self):
+        # Read password aging defaults
+        try:
+            minweeks = ''
+            maxweeks = ''
+            warnweeks = ''
+            for line in open("/etc/default/passwd", 'r'):
+                line = line.strip()
+                if (line.startswith('#') or line == ''):
+                    continue
+                key, value = line.split('=')
+                if key == "MINWEEKS":
+                    minweeks = value.rstrip('\n')
+                elif key == "MAXWEEKS":
+                    maxweeks = value.rstrip('\n')
+                elif key == "WARNWEEKS":
+                    warnweeks = value.rstrip('\n')
+        except Exception:
+            err = get_exception()
+            self.module.fail_json(msg="failed to read /etc/default/passwd: %s" % str(err))
+
+        return (minweeks, maxweeks, warnweeks)
+
     def remove_user(self):
         cmd = [self.module.get_bin_path('userdel', True)]
         if self.remove:
@@ -1294,6 +1318,7 @@ class SunOS(User):
         if not self.module.check_mode:
             # we have to set the password by editing the /etc/shadow file
             if self.password is not None:
+                minweeks, maxweeks, warnweeks = self.get_password_defaults()
                 try:
                     lines = []
                     for line in open(self.SHADOWFILE, 'rb').readlines():
@@ -1303,6 +1328,12 @@ class SunOS(User):
                             continue
                         fields[1] = self.password
                         fields[2] = str(int(time.time() / 86400))
+                        if minweeks:
+                            fields[3] = str(int(minweeks) * 7)
+                        if maxweeks:
+                            fields[4] = str(int(maxweeks) * 7)
+                        if warnweeks:
+                            fields[5] = str(int(warnweeks) * 7)
                         line = ':'.join(fields)
                         lines.append('%s\n' % line)
                     open(self.SHADOWFILE, 'w+').writelines(lines)
@@ -1381,6 +1412,7 @@ class SunOS(User):
         if self.update_password == 'always' and self.password is not None and info[1] != self.password:
             (rc, out, err) = (0, '', '')
             if not self.module.check_mode:
+                minweeks, maxweeks, warnweeks = self.get_password_defaults()
                 try:
                     lines = []
                     for line in open(self.SHADOWFILE, 'rb').readlines():
@@ -1390,6 +1422,12 @@ class SunOS(User):
                             continue
                         fields[1] = self.password
                         fields[2] = str(int(time.time() / 86400))
+                        if minweeks:
+                            fields[3] = str(int(minweeks) * 7)
+                        if maxweeks:
+                            fields[4] = str(int(maxweeks) * 7)
+                        if warnweeks:
+                            fields[5] = str(int(warnweeks) * 7)
                         line = ':'.join(fields)
                         lines.append('%s\n' % line)
                     open(self.SHADOWFILE, 'w+').writelines(lines)
@@ -1490,7 +1528,7 @@ class DarwinUser(User):
     def _change_user_password(self):
         '''Change password for SELF.NAME against SELF.PASSWORD.
 
-        Please note that password must be cleatext.
+        Please note that password must be cleartext.
         '''
         # some documentation on how is stored passwords on OSX:
         # http://blog.lostpassword.com/2012/07/cracking-mac-os-x-lion-accounts-passwords/
@@ -1522,7 +1560,7 @@ class DarwinUser(User):
 
     def __modify_group(self, group, action):
         '''Add or remove SELF.NAME to or from GROUP depending on ACTION.
-        ACTION can be 'add' or 'remove' otherwhise 'remove' is assumed. '''
+        ACTION can be 'add' or 'remove' otherwise 'remove' is assumed. '''
         if action == 'add':
             option = '-a'
         else:
@@ -1536,7 +1574,7 @@ class DarwinUser(User):
 
     def _modify_group(self):
         '''Add or remove SELF.NAME to or from GROUP depending on ACTION.
-        ACTION can be 'add' or 'remove' otherwhise 'remove' is assumed. '''
+        ACTION can be 'add' or 'remove' otherwise 'remove' is assumed. '''
 
         rc = 0
         out = ''
@@ -1549,12 +1587,13 @@ class DarwinUser(User):
         else:
             target = set([])
 
-        for remove in current - target:
-            (_rc, _err, _out) = self.__modify_group(remove, 'delete')
-            rc += rc
-            out += _out
-            err += _err
-            changed = True
+        if self.append is False:
+            for remove in current - target:
+                (_rc, _err, _out) = self.__modify_group(remove, 'delete')
+                rc += rc
+                out += _out
+                err += _err
+                changed = True
 
         for add in target - current:
             (_rc, _err, _out) = self.__modify_group(add, 'add')

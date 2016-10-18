@@ -193,28 +193,28 @@ def stack_operation(cfn, stack_name, operation):
             if 'yes' in existed:
                 result = dict(changed=True,
                               output='Stack Deleted',
-                              events=map(str, list(stack.describe_events())))
+                              events=list(map(str, list(stack.describe_events()))))
             else:
                 result = dict(changed= True, output='Stack Not Found')
             break
         if '%s_COMPLETE' % operation == stack.stack_status:
             result = dict(changed=True,
-                          events = map(str, list(stack.describe_events())),
+                          events = list(map(str, list(stack.describe_events()))),
                           output = 'Stack %s complete' % operation)
             break
         if  'ROLLBACK_COMPLETE' == stack.stack_status or '%s_ROLLBACK_COMPLETE' % operation == stack.stack_status:
             result = dict(changed=True, failed=True,
-                          events = map(str, list(stack.describe_events())),
+                          events = list(map(str, list(stack.describe_events()))),
                           output = 'Problem with %s. Rollback complete' % operation)
             break
         elif '%s_FAILED' % operation == stack.stack_status:
             result = dict(changed=True, failed=True,
-                          events = map(str, list(stack.describe_events())),
+                          events = list(map(str, list(stack.describe_events()))),
                           output = 'Stack %s failed' % operation)
             break
         elif '%s_ROLLBACK_FAILED' % operation == stack.stack_status:
             result = dict(changed=True, failed=True,
-                          events = map(str, list(stack.describe_events())),
+                          events = list(map(str, list(stack.describe_events()))),
                           output = 'Stack %s rollback failed' % operation)
             break
         else:
@@ -263,7 +263,7 @@ def main():
 
     if module.params['template'] is None and module.params['template_url'] is None:
         if state == 'present':
-            module.fail_json('Module parameter "template" or "template_url" is required if "state" is "present"')
+            module.fail_json(msg='Module parameter "template" or "template_url" is required if "state" is "present"')
 
     if module.params['template'] is not None:
         template_body = open(module.params['template'], 'r').read()
@@ -342,7 +342,8 @@ def main():
                              stack_policy_body=stack_policy_body,
                              disable_rollback=disable_rollback,
                              template_url=template_url,
-                             capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM'])
+                             capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM'],
+                             **kwargs)
             operation = 'UPDATE'
         except Exception as err:
             error_msg = boto_exception(err)

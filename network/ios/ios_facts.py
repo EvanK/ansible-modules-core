@@ -35,7 +35,7 @@ options:
         to a given subset.  Possible values for this argument include
         all, hardware, config, and interfaces.  Can specify a list of
         values to include a larger subset.  Values can also be used
-        with an initial M(!) to specify that a specific subset should
+        with an initial C(M(!)) to specify that a specific subset should
         not be collected.
     required: false
     default: '!config'
@@ -58,69 +58,88 @@ EXAMPLES = """
 """
 
 RETURN = """
-ansible_net_config:
-  description: The running-config from the device
-  returned: when config is configured
-  type: str
-ansible_net_interfaces:
-  description: The interfaces on the device
-  returned: when interfaces is configured
-  type: dict
-ansible_net_filesystems:
-  description: A list of the filesystems on the device
-  returned: when hardware is configured
+ansible_net_gather_subset:
+  description: The list of fact subsets collected from the device
+  returned: always
   type: list
-ansible_net_hostname:
-  description: The configured system hostname
-  returned: always
-  type: str
-ansible_net_image:
-  description: The image the system booted from
-  returned: always
-  type: str
-ansible_net_module:
-  description: The device model string
+
+# default
+ansible_net_model:
+  description: The model name returned from the device
   returned: always
   type: str
 ansible_net_serialnum:
-  description: The serial number of the device
+  description: The serial number of the remote device
   returned: always
   type: str
 ansible_net_version:
-  description: The version of the software running
+  description: The operating system version running on the remote device
   returned: always
   type: str
-ansible_net_gather_subset:
-  description: The list of subsets gathered by the module
+ansible_net_hostname:
+  description: The configured hostname of the device
   returned: always
-  type: list
-ansible_net_all_ipv4_addresses:
-  description: The list of all IPv4 addresses configured on the device
-  returned: when interface is configured
-  type: list
-ansible_net_all_ipv6_addresses:
-  description: The list of all ipv6 addresses configured on the device
-  returned: when interface is configured
-  type: list
-ansible_net_neighbors:
-  description: The set of LLDP neighbors
-  returned: when interface is configured
+  type: string
+ansible_net_image:
+  description: The image file the device is running
+  returned: always
+  type: string
+
+# hardware
+ansible_net_filesystems:
+  description: All file system names available on the device
+  returned: when hardware is configured
   type: list
 ansible_net_memfree_mb:
-  description: The amount of free processor memory
+  description: The available free memory on the remote device in Mb
   returned: when hardware is configured
   type: int
 ansible_net_memtotal_mb:
-  description: The total amount of available processor memory
+  description: The total memory on the remote device in Mb
   returned: when hardware is configured
   type: int
+
+# config
+ansible_net_config:
+  description: The current active config from the device
+  returned: when config is configured
+  type: str
+
+# interfaces
+ansible_net_all_ipv4_addresses:
+  description: All IPv4 addresses configured on the device
+  returned: when interfaces is configured
+  type: list
+ansible_net_all_ipv6_addresses:
+  description: All IPv6 addresses configured on the device
+  returned: when interfaces is configured
+  type: list
+ansible_net_interfaces:
+  description: A hash of all interfaces running on the system
+  returned: when interfaces is configured
+  type: dict
+ansible_net_neighbors:
+  description: The list of LLDP neighbors from the remote device
+  returned: when interfaces is configured
+  type: dict
 """
 import re
+import itertools
 
-from ansible.module_utils.basic import get_exception
-from ansible.module_utils.netcmd import CommandRunner
-from ansible.module_utils.ios import NetworkModule
+import ansible.module_utils.ios
+from ansible.module_utils.netcli import CommandRunner, AddCommandError
+from ansible.module_utils.network import NetworkModule
+from ansible.module_utils.six import iteritems
+from ansible.module_utils.six.moves import zip
 
+
+def add_command(runner, command):
+    try:
+        runner.add_command(command)
+    except AddCommandError:
+        # AddCommandError is raised for any issue adding a command to
+        # the runner.  Silently ignore the exception in this case
+        pass
 
 class FactsBase(object):
 
@@ -130,10 +149,13 @@ class FactsBase(object):
 
         self.commands()
 
+    def commands(self):
+        raise NotImplementedError
+
 class Default(FactsBase):
 
     def commands(self):
-        self.runner.add_command('show version')
+        add_command(self.runner, 'show version')
 
     def populate(self):
         data = self.runner.get_command('show version')
@@ -173,16 +195,16 @@ class Default(FactsBase):
 class Hardware(FactsBase):
 
     def commands(self):
-        self.runner.add_command('dir all-filesystems | include Directory')
-        self.runner.add_command('show version')
-        self.runner.add_command('show memory statistics | include Processor')
+        add_command(self.runner, 'dir | include Directory')
+        add_command(self.runner, 'show version')
+        add_command(self.runner, 'show memory statistics | include Processor')
 
     def populate(self):
-        data = self.runner.get_command('dir all-filesystems | include Directory')
+        data = self.runner.get_command('dir | include Directory')
         self.facts['filesystems'] = self.parse_filesystems(data)
 
         data = self.runner.get_command('show memory statistics | include Processor')
-        match = re.findall('\s(\d+)\s', data)
+        match = re.findall(r'\s(\d+)\s', data)
         if match:
             self.facts['memtotal_mb'] = int(match[0]) / 1024
             self.facts['memfree_mb'] = int(match[1]) / 1024
@@ -194,7 +216,7 @@ class Hardware(FactsBase):
 class Config(FactsBase):
 
     def commands(self):
-        self.runner.add_command('show running-config')
+        add_command(self.runner, 'show running-config')
 
     def populate(self):
         self.facts['config'] = self.runner.get_command('show running-config')
@@ -203,10 +225,10 @@ class Config(FactsBase):
 class Interfaces(FactsBase):
 
     def commands(self):
-        self.runner.add_command('show interfaces')
-        self.runner.add_command('show ipv6 interface')
-        self.runner.add_command('show lldp')
-        self.runner.add_command('show lldp neighbors detail')
+        add_command(self.runner, 'show interfaces')
+        add_command(self.runner, 'show ipv6 interface')
+        add_command(self.runner, 'show lldp')
+        add_command(self.runner, 'show lldp neighbors detail')
 
     def populate(self):
         self.facts['all_ipv4_addresses'] = list()
@@ -227,7 +249,7 @@ class Interfaces(FactsBase):
 
     def populate_interfaces(self, interfaces):
         facts = dict()
-        for key, value in interfaces.iteritems():
+        for key, value in iteritems(interfaces):
             intf = dict()
             intf['description'] = self.parse_description(value)
             intf['macaddress'] = self.parse_macaddress(value)
@@ -249,11 +271,11 @@ class Interfaces(FactsBase):
         return facts
 
     def populate_ipv6_interfaces(self, data):
-        for key, value in data.iteritems():
+        for key, value in iteritems(data):
             self.facts['interfaces'][key]['ipv6'] = list()
             addresses = re.findall(r'\s+(.+), subnet', value, re.M)
             subnets = re.findall(r', subnet is (.+)$', value, re.M)
-            for addr, subnet in itertools.izip(addresses, subnets):
+            for addr, subnet in zip(addresses, subnets):
                 ipv6 = dict(address=addr.strip(), subnet=subnet.strip())
                 self.add_ip_address(addr.strip(), 'ipv6')
                 self.facts['interfaces'][key]['ipv6'].append(ipv6)
@@ -280,6 +302,7 @@ class Interfaces(FactsBase):
 
     def parse_interfaces(self, data):
         parsed = dict()
+        key = ''
         for line in data.split('\n'):
             if len(line) == 0:
                 continue
@@ -417,7 +440,7 @@ def main():
     for key in runable_subsets:
         instances.append(FACT_SUBSETS[key](runner))
 
-    runner.run_commands()
+    runner.run()
 
     try:
         for inst in instances:
@@ -427,7 +450,7 @@ def main():
         module.exit_json(out=module.from_json(runner.items))
 
     ansible_facts = dict()
-    for key, value in facts.iteritems():
+    for key, value in iteritems(facts):
         key = 'ansible_net_%s' % key
         ansible_facts[key] = value
 
@@ -436,4 +459,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

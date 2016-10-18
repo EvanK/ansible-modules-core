@@ -57,6 +57,13 @@ options:
         description:
             - run daemon-reload before doing any other operations, to make sure systemd has read any changes.
         aliases: ['daemon-reload']
+    user:
+        required: false
+        default: no
+        choices: [ "yes", "no" ]
+        description:
+            - run systemctl talking to the service manager of the calling user, rather than the service manager
+              of the system.
 notes:
     - One option other than name is required.
 requirements:
@@ -68,8 +75,8 @@ EXAMPLES = '''
 - systemd: state=started name=httpd
 # Example action to stop service cron on debian, if running
 - systemd: name=cron state=stopped
-# Example action to restart service cron on centos, in all cases, also issue deamon-reload to pick up config changes
-- systemd: state=restarted daemon_reload: yes name=crond
+# Example action to restart service cron on centos, in all cases, also issue daemon-reload to pick up config changes
+- systemd: state=restarted daemon_reload=yes name=crond
 # Example action to reload service httpd, in all cases
 - systemd: name=httpd state=reloaded
 # Example action to enable service httpd and ensure it is not masked
@@ -217,6 +224,7 @@ status:
 import os
 import glob
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils._text import to_bytes, to_native
 
 # ===========================================
 # Main control flow
@@ -230,6 +238,7 @@ def main():
                 enabled = dict(type='bool'),
                 masked = dict(type='bool'),
                 daemon_reload= dict(type='bool', default=False, aliases=['daemon-reload']),
+                user= dict(type='bool', default=False),
             ),
             supports_check_mode=True,
             required_one_of=[['state', 'enabled', 'masked', 'daemon_reload']],
@@ -237,6 +246,8 @@ def main():
 
     # initialize
     systemctl = module.get_bin_path('systemctl')
+    if module.params['user']:
+        systemctl = systemctl + " --user"
     unit = module.params['name']
     rc = 0
     out = err = ''
@@ -260,7 +271,7 @@ def main():
     # load return of systemctl show into dictionary for easy access and return
     k = None
     multival = []
-    for line in out.split('\n'): # systemd can have multiline values delimited with {}
+    for line in to_native(out).split('\n'): # systemd can have multiline values delimited with {}
         if line.strip():
             if k is None:
                 if '=' in line:

@@ -172,7 +172,7 @@ stat:
             type: int
             sample: 1003
         size:
-            description: Size in bytes for a plain file, ammount of data for some special files
+            description: Size in bytes for a plain file, amount of data for some special files
             returned: success, path exists and user can read stats
             type: int
             sample: 203
@@ -272,13 +272,12 @@ stat:
                 supports hashing and md5 is supported
             type: string
             sample: f88fa92d8cf2eeecf4c0a50ccc96d0c0
-        checksum_algorithm:
+        checksum:
             description: hash of the path
             returned: success, path exists, user can read stats, path supports
                 hashing and supplied checksum algorithm is available
             type: string
             sample: 50ba294cdf28c0d5bcde25708df53346825a429f
-            aliases: ['checksum', 'checksum_algo']
         pw_name:
             description: User name of owner
             returned: success, path exists and user can read stats and installed python supports it
@@ -329,6 +328,7 @@ import stat
 # import module snippets
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.pycompat24 import get_exception
+from ansible.module_utils._text import to_bytes
 
 
 def format_output(module, path, st, follow, get_md5, get_checksum,
@@ -369,8 +369,8 @@ def format_output(module, path, st, follow, get_md5, get_checksum,
         isgid=bool(mode & stat.S_ISGID),
         readable=os.access(path, os.R_OK),
         writeable=os.access(path, os.W_OK),
-        excutable=os.access(path, os.X_OK),
-        )
+        executable=os.access(path, os.X_OK),
+    )
 
     if stat.S_ISLNK(mode):
         output['lnk_source'] = os.path.realpath(path)
@@ -418,6 +418,7 @@ def main():
     )
 
     path = module.params.get('path')
+    b_path = to_bytes(path, errors='surrogate_or_strict')
     follow = module.params.get('follow')
     get_mime = module.params.get('mime')
     get_md5 = module.params.get('get_md5')
@@ -426,9 +427,9 @@ def main():
 
     try:
         if follow:
-            st = os.stat(path)
+            st = os.stat(b_path)
         else:
-            st = os.lstat(path)
+            st = os.lstat(b_path)
     except OSError:
         e = get_exception()
         if e.errno == errno.ENOENT:

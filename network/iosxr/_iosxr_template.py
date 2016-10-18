@@ -17,18 +17,19 @@
 #
 DOCUMENTATION = """
 ---
-module: ios_template
+module: iosxr_template
 version_added: "2.1"
 author: "Peter Sprygada (@privateip)"
-short_description: Manage Cisco IOS device configurations over SSH
+short_description: Manage Cisco IOSXR device configurations over SSH
 description:
-  - Manages Cisco IOS network device configurations over SSH.  This module
+  - Manages network device configurations over SSH.  This module
     allows implementers to work with the device running-config.  It
     provides a way to push a set of commands onto a network device
     by evaluating the current running-config and only pushing configuration
     commands that are not already configured.  The config source can
     be a set of commands or a template.
-extends_documentation_fragment: ios
+deprecated: Deprecated in 2.2. Use iosxr_config instead
+extends_documentation_fragment: iosxr
 options:
   src:
     description:
@@ -37,7 +38,8 @@ options:
         runtime.  By default the task will first search for the source
         file in role or playbook root folder in templates unless a full
         path to the file is given.
-    required: true
+    required: false
+    default: null
   force:
     description:
       - The force argument instructs the module not to consider the
@@ -46,16 +48,6 @@ options:
         without first checking if already configured.
     required: false
     default: false
-    choices: [ "true", "false" ]
-  include_defaults:
-    description:
-      - The module, by default, will collect the current device
-        running-config to use as a base for comparison to the commands
-        in I(src).  Setting this value to true will cause the command
-        issued to add any necessary flags to collect all defaults as
-        well as the device configuration.  If the destination device
-        does not support such a flag, this argument is silently ignored.
-    required: true
     choices: [ "true", "false" ]
   backup:
     description:
@@ -80,23 +72,18 @@ options:
 """
 
 EXAMPLES = """
+
 - name: push a configuration onto the device
-  ios_template:
-    host: hostname
-    username: foo
+  iosxr_template:
     src: config.j2
 
 - name: forceable push a configuration onto the device
-  ios_template:
-    host: hostname
-    username: foo
+  iosxr_template:
     src: config.j2
     force: yes
 
-- name: provide the base configuration for comparision
-  ios_template:
-    host: hostname
-    username: foo
+- name: provide the base configuration for comparison
+  iosxr_template:
     src: candidate_config.txt
     config: current_config.txt
 """
@@ -115,7 +102,7 @@ responses:
   sample: ['...', '...']
 """
 from ansible.module_utils.netcfg import NetworkConfig, dumps
-from ansible.module_utils.ios import NetworkModule, NetworkError
+from ansible.module_utils.iosxr import NetworkModule
 
 def get_config(module):
     config = module.params['config'] or dict()
@@ -130,7 +117,6 @@ def main():
     argument_spec = dict(
         src=dict(),
         force=dict(default=False, type='bool'),
-        include_defaults=dict(default=True, type='bool'),
         backup=dict(default=False, type='bool'),
         config=dict(),
     )
@@ -148,16 +134,16 @@ def main():
     contents = get_config(module)
     if contents:
         config = NetworkConfig(contents=contents, indent=1)
-        result['_backup'] = contents
+        result['_backup'] = str(contents)
 
-    commands = list()
     if not module.params['force']:
-        commands = dumps(candidate.difference(config), 'commands')
+        commands = candidate.difference(config)
+        commands = dumps(commands, 'commands').split('\n')
+        commands = [str(c) for c in commands if c]
     else:
-        commands = str(candidate)
+        commands = str(candidate).split('\n')
 
     if commands:
-        commands = commands.split('\n')
         if not module.check_mode:
             response = module.config(commands)
             result['responses'] = response
@@ -169,4 +155,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

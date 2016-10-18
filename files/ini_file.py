@@ -101,16 +101,15 @@ EXAMPLES = '''
             backup=yes
 '''
 
-import ConfigParser
-import sys
 import os
+import re
 
 # ==============================================================
 # match_opt
 
 def match_opt(option, line):
   option = re.escape(option)
-  return re.match('%s( |\t)*=' % option, line) \
+  return re.match(' *%s( |\t)*=' % option, line) \
     or re.match('# *%s( |\t)*=' % option, line) \
     or re.match('; *%s( |\t)*=' % option, line)
 
@@ -119,7 +118,7 @@ def match_opt(option, line):
 
 def match_active_opt(option, line):
   option = re.escape(option)
-  return re.match('%s( |\t)*=' % option, line)
+  return re.match(' *%s( |\t)*=' % option, line)
 
 # ==============================================================
 # do_ini
@@ -156,8 +155,12 @@ def do_ini(module, filename, section=None, option=None, value=None, state='prese
             if within_section:
                 if state == 'present':
                     # insert missing option line at the end of the section
-                    ini_lines.insert(index, assignment_format % (option, value))
-                    changed = True
+                    for i in range(index, 0, -1):
+                        # search backwards for previous non-blank or non-comment line
+                        if not re.match(r'^[ \t]*([#;].*)?$', ini_lines[i - 1]):
+                            ini_lines.insert(i, assignment_format % (option, value))
+                            changed = True
+                            break
                 elif state == 'absent' and not option:
                     # remove the entire section
                     del ini_lines[section_start:index]
@@ -172,7 +175,7 @@ def do_ini(module, filename, section=None, option=None, value=None, state='prese
                         changed = ini_lines[index] != newline
                         ini_lines[index] = newline
                         if changed:
-                            # remove all possible option occurences from the rest of the section
+                            # remove all possible option occurrences from the rest of the section
                             index = index + 1
                             while index < len(ini_lines):
                                 line = ini_lines[index]
@@ -199,16 +202,17 @@ def do_ini(module, filename, section=None, option=None, value=None, state='prese
         changed = True
 
 
+    backup_file = None
     if changed and not module.check_mode:
         if backup:
-            module.backup_local(filename)
+            backup_file = module.backup_local(filename)
         ini_file = open(filename, 'w')
         try:
             ini_file.writelines(ini_lines)
         finally:
             ini_file.close()
 
-    return changed
+    return (changed, backup_file)
 
 # ==============================================================
 # main
@@ -229,8 +233,6 @@ def main():
         supports_check_mode = True
     )
 
-    info = dict()
-
     dest = os.path.expanduser(module.params['dest'])
     section = module.params['section']
     option = module.params['option']
@@ -239,13 +241,17 @@ def main():
     backup = module.params['backup']
     no_extra_spaces = module.params['no_extra_spaces']
 
-    changed = do_ini(module, dest, section, option, value, state, backup, no_extra_spaces)
+    (changed,backup_file) = do_ini(module, dest, section, option, value, state, backup, no_extra_spaces)
 
     file_args = module.load_file_common_arguments(module.params)
     changed = module.set_fs_attributes_if_different(file_args, changed)
 
+    results = { 'changed': changed, 'msg': "OK", 'dest': dest }
+    if backup_file is not None:
+        results['backup_file'] = backup_file
+
     # Mission complete
-    module.exit_json(dest=dest, changed=changed, msg="OK")
+    module.exit_json(**results)
 
 # import module snippets
 from ansible.module_utils.basic import *
