@@ -64,7 +64,7 @@ options:
   job:
     description:
       - The command to execute or, if env is set, the value of environment variable.
-        The command cannot contain line breaks.
+        The command should not contain line breaks.
         Required if state=present.
     required: false
     aliases: ['value']
@@ -203,7 +203,6 @@ EXAMPLES = '''
 import os
 import pwd
 import re
-import sys
 import tempfile
 import platform
 import pipes
@@ -388,10 +387,6 @@ class CronTab(object):
     def get_cron_job(self,minute,hour,day,month,weekday,job,special,disabled):
         # normalize any leading/trailing newlines (ansible/ansible-modules-core#3791)
         job = job.strip('\r\n')
-
-        # if inner linebreaks are found, raise exception
-        if any(char in job for char in ['\r', '\n']):
-            raise CronTabError("Job cannot contain line breaks: %s" % job)
 
         if disabled:
             disable_prefix = '#'
@@ -578,6 +573,7 @@ def main():
 
     changed      = False
     res_args     = dict()
+    warnings     = list()
 
     # Ensure all files generated are only writable by the owning user.  Primarily relevant for the cron_file option.
     os.umask(int('022', 8))
@@ -654,11 +650,10 @@ def main():
         old_job = crontab.find_job(name)
 
         if do_install:
-            try:
-                job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
-            except CronTabError:
-                err = sys.exc_info()[1]
-                module.fail_json(msg=str(err))
+            if any(char in job.strip('\r\n') for char in ['\r', '\n']):
+                warnings.append('Job should not contain line breaks')
+
+            job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
 
             if len(old_job) == 0:
                 crontab.add_job(name, job)
@@ -674,6 +669,7 @@ def main():
     res_args = dict(
         jobs = crontab.get_jobnames(),
         envs = crontab.get_envnames(),
+        warnings = warnings,
         changed = changed
     )
 
