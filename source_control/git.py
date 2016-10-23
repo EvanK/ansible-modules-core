@@ -21,7 +21,7 @@
 DOCUMENTATION = '''
 ---
 module: git
-author: 
+author:
     - "Ansible Core Team"
     - "Michael DeHaan"
 version_added: "0.0.1"
@@ -46,8 +46,8 @@ options:
         default: "HEAD"
         description:
             - What version of the repository to check out.  This can be the
-              the literal string C(HEAD), a branch name, a tag name. 
-              It can also be a I(SHA-1) hash, in which case C(refspec) needs 
+              the literal string C(HEAD), a branch name, a tag name.
+              It can also be a I(SHA-1) hash, in which case C(refspec) needs
               to be specified if the given revision is not already available.
     accept_hostkey:
         required: false
@@ -55,8 +55,8 @@ options:
         choices: [ "yes", "no" ]
         version_added: "1.5"
         description:
-            - if C(yes), adds the hostkey for the repo url if not already 
-              added. If ssh_opts contains "-o StrictHostKeyChecking=no", 
+            - if C(yes), adds the hostkey for the repo url if not already
+              added. If ssh_opts contains "-o StrictHostKeyChecking=no",
               this parameter is ignored.
     ssh_opts:
         required: false
@@ -186,9 +186,9 @@ requirements:
 
 notes:
     - "If the task seems to be hanging, first verify remote host is in C(known_hosts).
-      SSH will prompt user to authorize the first contact with a remote host.  To avoid this prompt, 
-      one solution is to use the option accept_hostkey. Another solution is to 
-      add the remote host public key in C(/etc/ssh/ssh_known_hosts) before calling 
+      SSH will prompt user to authorize the first contact with a remote host.  To avoid this prompt,
+      one solution is to use the option accept_hostkey. Another solution is to
+      add the remote host public key in C(/etc/ssh/ssh_known_hosts) before calling
       the git module, with the following command: ssh-keyscan -H remote_host.com >> /etc/ssh/ssh_known_hosts."
 '''
 
@@ -214,11 +214,17 @@ EXAMPLES = '''
 
 import os
 import re
+import shlex
+import stat
+import sys
 import tempfile
 from distutils.version import LooseVersion
 
-from ansible.module_utils.six import string_types
+from ansible.module_utils.basic import AnsibleModule, get_module_path
+from ansible.module_utils.known_hosts import add_git_host_key
+from ansible.module_utils.six import b, string_types
 from ansible.module_utils._text import to_bytes, to_native
+
 
 def head_splitter(headfile, remote, module=None, fail_on_error=False):
     '''Extract the head reference'''
@@ -253,13 +259,13 @@ def unfrackgitpath(path):
 
 def get_submodule_update_params(module, git_path, cwd):
 
-    #or: git submodule [--quiet] update [--init] [-N|--no-fetch] 
-    #[-f|--force] [--rebase] [--reference <repository>] [--merge] 
+    #or: git submodule [--quiet] update [--init] [-N|--no-fetch]
+    #[-f|--force] [--rebase] [--reference <repository>] [--merge]
     #[--recursive] [--] [<path>...]
 
     params = []
 
-    # run a bad submodule command to get valid params    
+    # run a bad submodule command to get valid params
     cmd = "%s submodule update --help" % (git_path)
     rc, stdout, stderr = module.run_command(cmd, cwd=cwd)
     lines = stderr.split('\n')
@@ -272,7 +278,7 @@ def get_submodule_update_params(module, git_path, cwd):
         update_line = update_line.replace(']','')
         update_line = update_line.replace('|',' ')
         parts = shlex.split(update_line)
-        for part in parts:    
+        for part in parts:
             if part.startswith('--'):
                 part = part.replace('--', '')
                 params.append(part)
@@ -320,7 +326,7 @@ def set_git_ssh(ssh_wrapper, key_file, ssh_opts):
         del os.environ["GIT_KEY"]
 
     if key_file:
-        os.environ["GIT_KEY"] = key_file    
+        os.environ["GIT_KEY"] = key_file
 
     if os.environ.get("GIT_SSH_OPTS"):
         del os.environ["GIT_SSH_OPTS"]
@@ -420,7 +426,7 @@ def reset(git_path, module, dest):
 
 def get_diff(module, git_path, dest, repo, remote, depth, bare, before, after):
     ''' Return the difference between 2 versions '''
-    if before == None:
+    if before is None:
         return { 'prepared': '>> Newly checked out %s' % after }
     elif before != after:
         # Ensure we have the object we are referring to during git diff !
@@ -469,7 +475,7 @@ def get_remote_head(git_path, module, dest, version, remote, bare):
     out = to_native(out)
 
     if tag:
-    # Find the dereferenced tag if this is an annotated tag.
+        # Find the dereferenced tag if this is an annotated tag.
         for tag in out.split('\n'):
             if tag.endswith(version + '^{}'):
                 out = tag
@@ -483,7 +489,7 @@ def get_remote_head(git_path, module, dest, version, remote, bare):
 def is_remote_tag(git_path, module, dest, remote, version):
     cmd = '%s ls-remote %s -t refs/tags/%s' % (git_path, remote, version)
     (rc, out, err) = module.run_command(cmd, check_rc=True, cwd=dest)
-    if to_bytes(version, errors='surrogate_or_strict') in out:
+    if to_native(version, errors='surrogate_or_strict') in out:
         return True
     else:
         return False
@@ -530,8 +536,8 @@ def is_local_branch(git_path, module, dest, branch):
 
 def is_not_a_branch(git_path, module, dest):
     branches = get_branches(git_path, module, dest)
-    for b in branches:
-        if b.startswith('* ') and ('no branch' in b or 'detached from' in b):
+    for branch in branches:
+        if branch.startswith('* ') and ('no branch' in branch or 'detached from' in branch):
             return True
     return False
 
@@ -550,13 +556,23 @@ def get_head_branch(git_path, module, dest, remote, bare=False):
     # Check if the .git is a file. If it is a file, it means that we are in a submodule structure.
     if os.path.isfile(repo_path):
         try:
-            gitdir = yaml.safe_load(open(repo_path)).get('gitdir')
+            git_conf = open(repo_path, 'rb')
+            for line in git_conf:
+                config_val = line.split(b(':'), 1)
+                if config_val[0].strip() == b('gitdir'):
+                    gitdir = to_native(config_val[1].strip(), errors='surrogate_or_strict')
+                    break
+            else:
+                # No repo path found
+                return ''
+
             # There is a possibility the .git file to have an absolute path.
             if os.path.isabs(gitdir):
                 repo_path = gitdir
             else:
                 repo_path = os.path.join(repo_path.split('.git')[0], gitdir)
         except (IOError, AttributeError):
+            # No repo path found
             return ''
     # Read .git/HEAD for the name of the branch.
     # If we're in a detached HEAD state, look up the branch associated with
@@ -601,7 +617,6 @@ def fetch(git_path, module, repo, dest, version, remote, depth, bare, refspec, g
 
     fetch_str = 'download remote objects and refs'
     fetch_cmd = [git_path, 'fetch']
-
 
     refspecs = []
     if depth:
@@ -674,7 +689,7 @@ def submodules_fetch(git_path, module, remote, track_submodules, dest):
         if line.strip().startswith('url'):
             repo = line.split('=', 1)[1].strip()
             if module.params['ssh_opts'] is not None:
-                if not "-o StrictHostKeyChecking=no" in module.params['ssh_opts']:
+                if "-o StrictHostKeyChecking=no" not in module.params['ssh_opts']:
                     add_git_host_key(module, repo, accept_hostkey=module.params['accept_hostkey'])
             else:
                 add_git_host_key(module, repo, accept_hostkey=module.params['accept_hostkey'])
@@ -756,11 +771,12 @@ def switch_version(git_path, module, dest, remote, version, verify_commit, depth
     else:
         # FIXME check for local_branch first, should have been fetched already
         if is_remote_branch(git_path, module, dest, remote, version):
+            if depth and not is_local_branch(git_path, module, dest, version):
+                # git clone --depth implies --single-branch, which makes
+                # the checkout fail if the version changes
+                # fetch the remote branch, to be able to check it out next
+                set_remote_branch(git_path, module, dest, remote, version, depth)
             if not is_local_branch(git_path, module, dest, version):
-                if depth:
-                    # git clone --depth implies --single-branch, which makes
-                    # the checkout fail if the version changes
-                    set_remote_branch(git_path, module, dest, remote, version, depth)
                 cmd = "%s checkout --track -b %s %s/%s" % (git_path, version, remote, version)
             else:
                 (rc, out, err) = module.run_command("%s checkout --force %s" % (git_path, version), cwd=dest)
@@ -786,7 +802,11 @@ def switch_version(git_path, module, dest, remote, version, verify_commit, depth
 
 
 def verify_commit_sign(git_path, module, dest, version):
-    cmd = "%s verify-commit %s" % (git_path, version)
+    if version in get_tags(git_path, module, dest):
+        git_sub = "verify-tag"
+    else:
+        git_sub = "verify-commit"
+    cmd = "%s %s %s" % (git_path, git_sub, version)
     (rc, out, err) = module.run_command(cmd, cwd=dest)
     if rc != 0:
         module.fail_json(msg='Failed to verify GPG signature of commit/tag "%s"' % version, stdout=out, stderr=err, rc=rc)
@@ -854,7 +874,7 @@ def main():
     result = dict( warnings=list() )
 
     # evaluate and set the umask before doing anything else
-    if umask != None:
+    if umask is not None:
         if not isinstance(umask, string_types):
             module.fail_json(msg="umask must be defined as a quoted octal integer")
         try:
@@ -892,9 +912,9 @@ def main():
         set_git_ssh(ssh_wrapper, key_file, ssh_opts)
         module.add_cleanup_file(path=ssh_wrapper)
 
-    # add the git repo's hostkey 
+    # add the git repo's hostkey
     if module.params['ssh_opts'] is not None:
-        if not "-o StrictHostKeyChecking=no" in module.params['ssh_opts']:
+        if "-o StrictHostKeyChecking=no" not in module.params['ssh_opts']:
             add_git_host_key(module, repo, accept_hostkey=module.params['accept_hostkey'])
     else:
         add_git_host_key(module, repo, accept_hostkey=module.params['accept_hostkey'])
@@ -1015,9 +1035,6 @@ def main():
 
     module.exit_json(**result)
 
-# import module snippets
-from ansible.module_utils.basic import *
-from ansible.module_utils.known_hosts import *
 
 if __name__ == '__main__':
     main()
