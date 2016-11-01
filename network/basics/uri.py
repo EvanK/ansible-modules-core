@@ -20,19 +20,6 @@
 #
 # see examples/playbooks/uri.yml
 
-import cgi
-import shutil
-import tempfile
-import datetime
-
-try:
-    import json
-except ImportError:
-    import simplejson as json
-
-import ansible.module_utils.six as six
-
-
 DOCUMENTATION = '''
 ---
 module: uri
@@ -216,6 +203,23 @@ EXAMPLES = '''
     status_code: 201
 
 '''
+
+import cgi
+import datetime
+import os
+import shutil
+import tempfile
+
+try:
+    import json
+except ImportError:
+    import simplejson as json
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.pycompat24 import get_exception
+import ansible.module_utils.six as six
+from ansible.module_utils._text import to_text
+from ansible.module_utils.urls import fetch_url, url_argument_spec
 
 
 def write_file(module, url, dest, content):
@@ -434,9 +438,11 @@ def main():
 
     # Transmogrify the headers, replacing '-' with '_', since variables dont
     # work with dashes.
+    # In python3, the headers are title cased.  Lowercase them to be
+    # compatible with the python2 behaviour.
     uresp = {}
     for key, value in six.iteritems(resp):
-        ukey = key.replace("-", "_")
+        ukey = key.replace("-", "_").lower()
         uresp[ukey] = value
 
     try:
@@ -450,7 +456,7 @@ def main():
         content_type, params = cgi.parse_header(uresp['content_type'])
         if 'charset' in params:
             content_encoding = params['charset']
-        u_content = unicode(content, content_encoding, errors='replace')
+        u_content = to_text(content, encoding=content_encoding)
         if 'application/json' in content_type or 'text/json' in content_type:
             try:
                 js = json.loads(u_content)
@@ -458,7 +464,7 @@ def main():
             except:
                 pass
     else:
-        u_content = unicode(content, content_encoding, errors='replace')
+        u_content = to_text(content, encoding=content_encoding)
 
     if resp['status'] not in status_code:
         uresp['msg'] = 'Status code was not %s: %s' % (status_code, uresp.get('msg', ''))
@@ -468,10 +474,6 @@ def main():
     else:
         module.exit_json(changed=changed, **uresp)
 
-
-# import module snippets
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
 
 if __name__ == '__main__':
     main()
