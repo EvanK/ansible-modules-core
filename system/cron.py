@@ -672,8 +672,10 @@ def main():
                 changed = True
     else:
         if do_install:
-            if any(char in job.strip('\r\n') for char in ['\r', '\n']):
-                warnings.append('Job should not contain line breaks')
+            for char in ['\r', '\n']:
+                if char in job.strip('\r\n'):
+                    warnings.append('Job should not contain line breaks')
+                    break
 
             job = crontab.get_cron_job(minute, hour, day, month, weekday, job, special_time, disabled)
             old_job = crontab.find_job(name, job)
